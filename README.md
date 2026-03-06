@@ -52,7 +52,7 @@ jobs:
 
 ### Prerequisites
 
-- The calling workflow must declare the required permissions:
+- The calling workflow must declare the required permissions. A reusable workflow cannot escalate beyond the permissions granted by its caller.
   - `pull-requests: write`
   - `issues: write`
 
