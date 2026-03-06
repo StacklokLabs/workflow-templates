@@ -1,0 +1,170 @@
+name: Check PR Issue Link
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  workflow_call:
+    # No inputs needed — the workflow uses the caller's github.token and context.repo automatically.
+    # Callers must declare these permissions in their own workflow:
+    #   permissions:
+    #     pull-requests: write
+    #     issues: write
+    #
+    # This workflow is only callable by repositories in the StacklokLabs organization.
+    # Prerequisite: enable "Accessible from repositories in the 'StacklokLabs' organization"
+    # in this repo under Settings → Actions → General → Access.
+
+permissions:
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-issue-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check-issue-link:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const SENTINEL = '<!-- pr-issue-check-warning -->';
+            const LABEL = 'needs-issue-link';
+            const LINK_REGEX = /\b(closes|fixes|resolves|close|fix|resolve)\s+#?(\d+)\b/gi;
+
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request.number;
+
+            async function ensureLabelExists() {
+              try {
+                await github.rest.issues.createLabel({
+                  owner, repo,
+                  name: LABEL,
+                  color: 'e4e669',
+                });
+              } catch (e) {
+                if (e.status !== 422) throw e;
+              }
+            }
+
+            async function findExistingWarningComment() {
+              for await (const { data: comments } of github.paginate.iterator(
+                github.rest.issues.listComments,
+                { owner, repo, issue_number: prNumber, per_page: 100 }
+              )) {
+                const found = comments.find(c => c.body.includes(SENTINEL));
+                if (found) return found;
+              }
+              return null;
+            }
+
+            async function upsertComment(body) {
+              const existing = await findExistingWarningComment();
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner, repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner, repo,
+                  issue_number: prNumber,
+                  body,
+                });
+              }
+            }
+
+            async function deleteWarningComment() {
+              const existing = await findExistingWarningComment();
+              if (existing) {
+                await github.rest.issues.deleteComment({
+                  owner, repo,
+                  comment_id: existing.id,
+                });
+              }
+            }
+
+            async function addWarningLabel() {
+              try {
+                await github.rest.issues.addLabels({
+                  owner, repo,
+                  issue_number: prNumber,
+                  labels: [LABEL],
+                });
+              } catch (e) {
+                if (e.status !== 422) throw e;
+              }
+            }
+
+            async function removeWarningLabel() {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner, repo,
+                  issue_number: prNumber,
+                  name: LABEL,
+                });
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+            }
+
+            await ensureLabelExists();
+
+            const body = context.payload.pull_request.body || '';
+            const matches = [...body.matchAll(LINK_REGEX)];
+            const issueNumbers = [...new Set(matches.map(m => parseInt(m[2], 10)))];
+
+            if (issueNumbers.length === 0) {
+              await upsertComment(
+                `${SENTINEL}\n## Missing Issue Link\n\nThis PR does not appear to reference a GitHub issue.\nPlease add a closing keyword, e.g.: \`Closes #123\`\nSupported: closes, fixes, resolves, close, fix, resolve (case insensitive)`
+              );
+              await addWarningLabel();
+              core.warning('PR has no linked issue');
+              return;
+            }
+
+            const invalidNumbers = [];
+            const prNumbers = [];
+            for (const num of issueNumbers) {
+              try {
+                const { data } = await github.rest.issues.get({ owner, repo, issue_number: num });
+    
+                // Pull requests are also returned by the issues API; filter them out as invalid issues
+                if (data.pull_request) {
+                  prNumbers.push(num);
+                }
+              } catch (e) {
+                if (e.status === 404) {
+                  invalidNumbers.push(num);
+                } else {
+                  throw e;
+                }
+              }
+            }
+
+            const validNumbers = issueNumbers.filter(n => !invalidNumbers.includes(n) && !prNumbers.includes(n));
+
+            const invalidLines = [
+              ...invalidNumbers.map(n => `- \`#${n}\` does not exist in this repository`),
+              ...prNumbers.map(n => `- \`#${n}\` is a pull request, not an issue`),
+            ];
+
+            if (validNumbers.length === 0 && invalidLines.length > 0) {
+              await upsertComment(
+                `${SENTINEL}\n## Invalid Issue Reference\n\n${invalidLines.join('\n')}\n\nPlease update the PR description to reference a valid issue.`
+              );
+              await addWarningLabel();
+              core.warning(`PR has no valid issue links (not found: ${invalidNumbers.join(', ') || 'none'}, pull requests: ${prNumbers.join(', ') || 'none'})`);
+            } else if (invalidLines.length > 0) {
+              await upsertComment(
+                `${SENTINEL}\n## Heads-up: Some Issue References Are Invalid\n\nThe following referenced numbers could not be validated as issues:\n${invalidLines.join('\n')}\n\nThe PR has at least one valid issue link, so no action is required — but you may want to clean up the invalid references.`
+              );
+              await removeWarningLabel();
+              core.warning(`PR references non-issues (not found: ${invalidNumbers.join(', ') || 'none'}, pull requests: ${prNumbers.join(', ') || 'none'})`);
+            } else {
+              await deleteWarningComment();
+              await removeWarningLabel();
+              core.info('PR issue link is valid');
+            }
