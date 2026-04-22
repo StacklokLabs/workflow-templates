@@ -114,11 +114,25 @@ jobs:
 
             const body = context.payload.pull_request.body || '';
             const matches = [...body.matchAll(LINK_REGEX)];
-            const issueNumbers = [...new Set(matches.map(m => parseInt(m[2], 10)))];
 
-            if (issueNumbers.length === 0) {
+            // Build unique references keyed by owner/repo#num so same-repo #N
+            // and cross-repo owner/repo#N are not collapsed.
+            const refsByKey = new Map();
+            for (const m of matches) {
+              const refOwner = m[2] || owner;
+              const refRepo = m[3] || repo;
+              const number = parseInt(m[4], 10);
+              const isCrossRepo = Boolean(m[2] && m[3]);
+              const key = `${refOwner}/${refRepo}#${number}`;
+              if (!refsByKey.has(key)) {
+                refsByKey.set(key, { owner: refOwner, repo: refRepo, number, isCrossRepo });
+              }
+            }
+            const references = [...refsByKey.values()];
+
+            if (references.length === 0) {
               await upsertComment(
-                `${SENTINEL}\n## Missing Issue Link\n\nThis PR does not appear to reference a GitHub issue.\nPlease add a closing keyword, e.g.: \`Closes #123\`\nSupported: closes, fixes, resolves, close, fix, resolve (case insensitive)`
+                `${SENTINEL}\n## Missing Issue Link\n\nThis PR does not appear to reference a GitHub issue.\nPlease add a closing keyword, e.g. \`Closes #123\` or \`Closes owner/repo#123\`.\nSupported: closes, fixes, resolves, close, fix, resolve (case insensitive)`
               );
               await addWarningLabel();
               core.warning('PR has no linked issue');
