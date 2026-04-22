@@ -139,26 +139,40 @@ jobs:
               return;
             }
 
-            const invalidNumbers = [];
-            const prNumbers = [];
-            for (const num of issueNumbers) {
+            // Render a reference as it should appear in user-facing messages:
+            // same-repo → `#123`, cross-repo → `owner/repo#123`.
+            function renderRef(ref) {
+              return ref.isCrossRepo ? `${ref.owner}/${ref.repo}#${ref.number}` : `#${ref.number}`;
+            }
+
+            const notFoundRefs = [];
+            const pullRequestRefs = [];
+            const validRefs = [];
+
+            for (const ref of references) {
               try {
-                const { data } = await github.rest.issues.get({ owner, repo, issue_number: num });
-    
-                // Pull requests are also returned by the issues API; filter them out as invalid issues
+                const { data } = await github.rest.issues.get({
+                  owner: ref.owner,
+                  repo: ref.repo,
+                  issue_number: ref.number,
+                });
+
+                // Pull requests are also returned by the issues API; filter them out as invalid issues.
                 if (data.pull_request) {
-                  prNumbers.push(num);
+                  pullRequestRefs.push(ref);
+                } else {
+                  validRefs.push(ref);
                 }
               } catch (e) {
                 if (e.status === 404) {
-                  invalidNumbers.push(num);
+                  // A 404 on a cross-repo ref (typo, private repo, or repo the
+                  // token cannot access) is treated the same as a same-repo 404.
+                  notFoundRefs.push(ref);
                 } else {
                   throw e;
                 }
               }
             }
-
-            const validNumbers = issueNumbers.filter(n => !invalidNumbers.includes(n) && !prNumbers.includes(n));
 
             const invalidLines = [
               ...invalidNumbers.map(n => `- \`#${n}\` does not exist in this repository`),
