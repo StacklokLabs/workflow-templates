@@ -31,7 +31,7 @@ jobs:
           script: |
             const SENTINEL = '<!-- pr-issue-check-warning -->';
             const LABEL = 'needs-issue-link';
-            const LINK_REGEX = /\b(closes|fixes|resolves|close|fix|resolve)\s+#?(\d+)\b/gi;
+            const LINK_REGEX = /\b(closes|fixes|resolves|close|fix|resolve)\s+(?:([\w.-]+)\/([\w.-]+)#|#?)(\d+)\b/gi;
 
             const { owner, repo } = context.repo;
             const prNumber = context.payload.pull_request.number;
