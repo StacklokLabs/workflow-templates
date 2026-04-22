@@ -11,15 +11,25 @@ A collection of reusable GitHub Actions workflows.
 ## Check PR Issue Link
 
 Ensures every pull request includes a closing keyword that links to a valid GitHub issue
-(e.g. `Closes #42`). When a valid link is missing, the workflow posts a warning comment and
-applies a `needs-issue-link` label. Once the PR description is corrected, the comment and
-label are automatically removed.
+(e.g. `Closes #42`). Cross-repository references are also supported, e.g.
+`Closes stacklok/ai-toolkit#129`. When a valid link is missing, the workflow posts a
+warning comment and applies a `needs-issue-link` label. Once the PR description is
+corrected, the comment and label are automatically removed.
 
 ### Supported keywords
 
-All keywords are **case-insensitive** and may optionally include `#` before the issue number:
+All keywords are **case-insensitive**:
 
 `closes`, `close`, `fixes`, `fix`, `resolves`, `resolve`
+
+### Supported reference forms
+
+- Same repository: `Closes #123` or `Closes 123` (the `#` is optional)
+- Cross repository: `Closes owner/repo#123` (the `#` is required)
+
+Cross-repository references are validated via the GitHub API using the workflow's
+`GITHUB_TOKEN`. If the referenced repository is private or otherwise unreachable
+by the token, the reference will be reported as not found.
 
 ### Behavior
 
